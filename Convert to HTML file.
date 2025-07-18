@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物理碰撞实验数据分析与可视化</title>
+    
+    <!-- 引入 Chart.js 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- 引入 Google Fonts 和 Font Awesome 图标库 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2c3e50;
+            --background-color: #ecf0f1;
+            --card-bg-color: #ffffff;
+            --text-color: #34495e;
+            --header-color: #2c3e50;
+            --border-color: #dce4e8;
+            --success-color: #2ecc71;
+            --warning-color: #f39c12;
+            --error-color: #e74c3c;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 2em;
+            line-height: 1.7;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            background-color: var(--card-bg-color);
+            padding: 2em 3em;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        h1, h2, h3 {
+            color: var(--header-color);
+            font-weight: 700;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 0.5em;
+            border-bottom: 2px solid var(--primary-color);
+            padding-bottom: 0.5em;
+        }
+
+        h2 {
+            font-size: 1.8em;
+            margin-top: 1.5em;
+            padding-bottom: 0.3em;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h2 .fas {
+            margin-right: 0.5em;
+            color: var(--primary-color);
+        }
+        
+        section {
+            margin-bottom: 3em;
+        }
+        
+        .introduction-text ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        .introduction-text li {
+            background: #f8f9fa;
+            border-left: 4px solid var(--primary-color);
+            padding: 1em;
+            margin-bottom: 0.5em;
+            border-radius: 4px;
+        }
+        
+        .experiment-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2em;
+        }
+
+        .experiment-card {
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1.5em;
+            background-color: #fdfdfd;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .experiment-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+        }
+
+        .experiment-card h3 {
+            text-align: center;
+            margin-top: 0;
+            padding-bottom: 0.5em;
+            border-bottom: 1px dashed var(--border-color);
+        }
+
+        .input-group {
+            margin-bottom: 1em;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 0.5em;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .input-group input:disabled {
+            background-color: #e9ecef;
+            cursor: not-allowed;
+        }
+        
+        .action-button {
+            display: block;
+            width: 100%;
+            padding: 1em;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #fff;
+            background: linear-gradient(45deg, var(--primary-color), #5dade2);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 2em;
+        }
+
+        .action-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
+        }
+        
+        #output-section {
+            display: none; /* Initially hidden */
+            margin-top: 3em;
+        }
+        
+        .results-output, .analysis-box {
+            background-color: var(--secondary-color);
+            color: #fdfdfd;
+            padding: 1.5em;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            font-family: "Courier New", Courier, monospace;
+            line-height: 1.6;
+            margin-bottom: 2em;
+        }
+        
+        .analysis-box {
+            background-color: #f8f9fa;
+            color: var(--text-color);
+            font-family: 'Noto Sans SC', sans-serif;
+            white-space: normal;
+        }
+        
+        .analysis-box h3 {
+            margin-top: 0;
+        }
+
+        .chart-wrapper {
+            margin-bottom: 3em;
+            padding: 1.5em;
+            border-radius: 8px;
+            background: var(--card-bg-color);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>物理碰撞实验数据分析</h1>
+    </header>
+
+    <main>
+        <section id="introduction">
+            <h2><i class="fas fa-book-open"></i>实验原理与步骤</h2>
+            <div class="introduction-text">
+                <h3>实验原理</h3>
+                <p>本实验旨在通过测量小球碰撞前后的速度和单摆的摆角，来研究不同类型碰撞中的动量和能量变化规律。</p>
+                <ul>
+                    <li><strong>动量守恒定律</strong>：在一个孤立系统（不受外力或所受外力之和为零）中，系统总动量保持不变。本实验中，我们将检验碰撞前后系统总动量 `p = mv` 是否守恒。</li>
+                    <li><strong>能量守恒与转化</strong>：碰撞过程中，系统的总能量守恒，但动能不一定守恒。动能的损失会转化为内能、声能等。我们将计算动能损失 `ΔEk`。</li>
+                    <li><strong>恢复系数 (e)</strong>：也称弹性系数，是描述碰撞后两物体分离速度与碰撞前接近速度之比的物理量，`e = (v2' - v1') / (v1 - v2)`。它衡量了碰撞的弹性程度：
+                        <ul>
+                            <li><strong>完全弹性碰撞</strong>：e ≈ 1，动能基本不损失。</li>
+                            <li><strong>非完全弹性碰撞</strong>：0 < e < 1，部分动能损失。</li>
+                            <li><strong>完全非弹性碰撞</strong>：e ≈ 0，两物体粘合在一起运动，动能损失最大。</li>
+                        </ul>
+                    </li>
+                </ul>
+                <h3>实验步骤</h3>
+                <ol>
+                    <li>根据下方提示，输入实验装置的固定参数（摆长）。</li>
+                    <li>为三种碰撞类型，分别输入对应的入射小球和单摆小球的质量、直径等参数。</li>
+                    <li>输入通过光电门测量的挡光时间和单摆的最大摆角。</li>
+                    <li>点击“计算并生成图表”按钮，查看量化数据、可视化图表和智能分析。</li>
+                </ol>
+            </div>
+        </section>
+
+        <section id="input-section">
+            <h2><i class="fas fa-cogs"></i>参数输入</h2>
+            <div class="global-params">
+                <h3>通用参数</h3>
+                <div class="input-group">
+                    <label for="pendulum_length">单摆摆长 (L, 单位: m)</label>
+                    <input type="number" id="pendulum_length" value="1.0">
+                </div>
+            </div>
+
+            <div class="experiment-grid">
+                <!-- 完全弹性碰撞 - 示例数据 -->
+                <div class="experiment-card">
+                    <h3><i class="fas fa-atom"></i> 完全弹性碰撞</h3>
+                    <div class="input-group"><label>入射小球质量 (m1, kg):</label><input type="number" id="ball_mass_elastic" value="0.1"></div>
+                    <div class="input-group"><label>入射小球直径 (d, m):</label><input type="number" id="ball_diameter_elastic" value="0.025"></div>
+                    <div class="input-group"><label>单摆小球质量 (m2, kg):</label><input type="number" id="pendulum_mass_elastic" value="0.1"></div>
+                    <hr>
+                    <div class="input-group"><label>碰撞前挡光时间 (t1, s):</label><input type="number" id="t_before_elastic" value="0.0125"></div>
+                    <div class="input-group"><label>碰撞后挡光时间 (t2, s):</label><input type="number" id="t_after_elastic" value="2.5"></div>
+                    <div class="input-group"><label>单摆最大摆角 (θ, 度):</label><input type="number" id="angle_elastic" value="60"></div>
+                </div>
+
+                <!-- 非完全弹性碰撞 - 示例数据 -->
+                <div class="experiment-card">
+                    <h3><i class="fas fa-compress-arrows-alt"></i> 非完全弹性碰撞</h3>
+                    <div class="input-group"><label>入射小球质量 (m1, kg):</label><input type="number" id="ball_mass_inelastic" value="0.15"></div>
+                    <div class="input-group"><label>入射小球直径 (d, m):</label><input type="number" id="ball_diameter_inelastic" value="0.025"></div>
+                    <div class="input-group"><label>单摆小球质量 (m2, kg):</label><input type="number" id="pendulum_mass_inelastic" value="0.1"></div>
+                    <hr>
+                    <div class="input-group"><label>碰撞前挡光时间 (t1, s):</label><input type="number" id="t_before_inelastic" value="0.0125"></div>
+                    <div class="input-group"><label>碰撞后挡光时间 (t2, s):</label><input type="number" id="t_after_inelastic" value="0.0357"></div>
+                    <div class="input-group"><label>单摆最大摆角 (θ, 度):</label><input type="number" id="angle_inelastic" value="48.6"></div>
+                </div>
+
+                <!-- 完全非弹性碰撞 - 示例数据 -->
+                <div class="experiment-card">
+                    <h3><i class="fas fa-magnet"></i> 完全非弹性碰撞</h3>
+                    <div class="input-group"><label>入射小球质量 (m1, kg):</label><input type="number" id="ball_mass_fullinelastic" value="0.1"></div>
+                    <div class="input-group"><label>入射小球直径 (d, m):</label><input type="number" id="ball_diameter_fullinelastic" value="0.025"></div>
+                    <div class="input-group"><label>单摆小球质量 (m2, kg):</label><input type="number" id="pendulum_mass_fullinelastic" value="0.1"></div>
+                    <hr>
+                    <div class="input-group"><label>碰撞前挡光时间 (t1, s):</label><input type="number" id="t_before_fullinelastic" value="0.0125"></div>
+                    <div class="input-group"><label>碰撞后挡光时间 (t2, s):</label><input type="number" id="t_after_fullinelastic" value="" disabled placeholder="无需输入"></div>
+                    <div class="input-group"><label>单摆最大摆角 (θ, 度):</label><input type="number" id="angle_fullinelastic" value="28.95"></div>
+                </div>
+            </div>
+
+            <button id="calculateBtn" class="action-button"><i class="fas fa-calculator"></i> 计算并生成图表</button>
+        </section>
+
+        <!-- 结果显示区域 -->
+        <section id="output-section">
+            <h2><i class="fas fa-chart-bar"></i> 实验结果</h2>
+            <pre id="numerical-results" class="results-output"></pre>
+            
+            <div class="charts-container">
+                <div class="chart-wrapper"><canvas id="momentumChart"></canvas></div>
+                <div class="chart-wrapper"><canvas id="energyChart"></canvas></div>
+                <div class="chart-wrapper"><canvas id="restitutionChart"></canvas></div>
+            </div>
+            
+            <div id="analysis-container">
+                <h2><i class="fas fa-lightbulb"></i> 结果分析</h2>
+                <div id="analysis-text" class="analysis-box"></div>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+    // --- 物理计算核心函数 (JavaScript 版本) ---
+    const g = 9.8;
+
+    function calculateVelocityFromPhotogate(diameter, time) {
+        if (time <= 0) return 0;
+        return diameter / time;
+    }
+
+    function calculateVelocityFromPendulum(length, thetaDegrees) {
+        const thetaRad = thetaDegrees * (Math.PI / 180);
+        const h = length * (1 - Math.cos(thetaRad));
+        return Math.sqrt(2 * g * h);
+    }
+
+    function analyzeCollision(ballMass, pendulumMass, v1Initial, v1Final, v2Final) {
+        const pInitial = ballMass * v1Initial;
+        const pFinal = ballMass * v1Final + pendulumMass * v2Final;
+        const keInitial = 0.5 * ballMass * v1Initial**2;
+        const keFinal = 0.5 * ballMass * v1Final**2 + 0.5 * pendulumMass * v2Final**2;
+        const energyLoss = Math.max(0, keInitial - keFinal); // 能量损失不能为负
+        let restitutionCoeff = NaN;
+        if (v1Initial !== 0) {
+            restitutionCoeff = (v2Final - v1Final) / v1Initial;
+        }
+        return { p_initial: pInitial, p_final: pFinal, ke_initial: keInitial, energy_loss: energyLoss, restitution_coeff: restitutionCoeff };
+    }
+
+    let chartInstances = {};
+
+    function destroyCharts() {
+        Object.values(chartInstances).forEach(chart => { if (chart) chart.destroy(); });
+        chartInstances = {};
+    }
+    
+    // --- 智能分析函数 ---
+    function generateAnalysis(results) {
+        let analysisHTML = '<ul>';
+        results.forEach(res => {
+            analysisHTML += `<li><strong>${res.type}：</strong> `;
+            
+            // 动量分析
+            const p_ratio = res.p_final / res.p_initial;
+            if (p_ratio > 0.95 && p_ratio < 1.05) {
+                analysisHTML += `系统总动量基本守恒 (末动量/初动量 ≈ ${p_ratio.toFixed(2)})。`;
+            } else {
+                analysisHTML += `系统总动量存在一定偏差 (末动量/初动量 ≈ ${p_ratio.toFixed(2)})，可能由测量误差或摩擦力导致。`;
+            }
+
+            // 恢复系数与能量损失分析
+            const e = res.restitution_coeff;
+            const energy_loss_ratio = res.ke_initial > 0 ? (res.energy_loss / res.ke_initial) * 100 : 0;
+
+            if (e > 0.9) {
+                analysisHTML += ` 恢复系数 e ≈ ${e.toFixed(2)}，接近1，动能损失很小 (${energy_loss_ratio.toFixed(1)}%)，符合<strong>完全弹性碰撞</strong>的特征。`;
+            } else if (e < 0.2 && e >= 0) {
+                 analysisHTML += ` 恢复系数 e ≈ ${e.toFixed(2)}，接近0，动能损失显著 (${energy_loss_ratio.toFixed(1)}%)，符合<strong>完全非弹性碰撞</strong>的特征。`;
+            } else if (e >= 0.2 && e <= 0.9) {
+                analysisHTML += ` 恢复系数 e ≈ ${e.toFixed(2)}，介于0和1之间，存在明显的动能损失 (${energy_loss_ratio.toFixed(1)}%)，是典型的<strong>非完全弹性碰撞</strong>。`;
+            } else {
+                 analysisHTML += ` 恢复系数计算异常 (e ≈ ${e.toFixed(2)})，请检查输入数据。`;
+            }
+            analysisHTML += '</li>';
+        });
+        analysisHTML += '</ul>';
+        return analysisHTML;
+    }
+
+
+    // --- 主逻辑 ---
+    document.getElementById('calculateBtn').addEventListener('click', () => {
+        try {
+            document.getElementById('output-section').style.display = 'block';
+
+            const pendulumLength = parseFloat(document.getElementById('pendulum_length').value);
+            if (isNaN(pendulumLength) || pendulumLength <= 0) throw new Error("请输入有效的摆长！");
+
+            const experimentTypes = [
+                { id: 'elastic', name: '完全弹性碰撞' },
+                { id: 'inelastic', name: '非完全弹性碰撞' },
+                { id: 'fullinelastic', name: '完全非弹性碰撞' }
+            ];
+
+            let allResults = [];
+            let numericalOutput = "";
+
+            for (const exp of experimentTypes) {
+                const inputs = [
+                    parseFloat(document.getElementById(`ball_mass_${exp.id}`).value),
+                    parseFloat(document.getElementById(`ball_diameter_${exp.id}`).value),
+                    parseFloat(document.getElementById(`pendulum_mass_${exp.id}`).value),
+                    parseFloat(document.getElementById(`t_before_${exp.id}`).value),
+                    parseFloat(document.getElementById(`angle_${exp.id}`).value)
+                ];
+                if (inputs.some(isNaN)) throw new Error(`请填写【${exp.name}】的所有有效数值！`);
+                
+                const [ballMass, ballDiameter, pendulumMass, tBefore, angle] = inputs;
+
+                const v1Initial = calculateVelocityFromPhotogate(ballDiameter, tBefore);
+                const v2Final = calculateVelocityFromPendulum(pendulumLength, angle);
+                let v1Final;
+
+                if (exp.id === 'fullinelastic') {
+                    v1Final = v2Final;
+                } else {
+                    const tAfter = parseFloat(document.getElementById(`t_after_${exp.id}`).value);
+                    if (isNaN(tAfter)) throw new Error(`请填写【${exp.name}】的碰撞后挡光时间！`);
+                    v1Final = calculateVelocityFromPhotogate(ballDiameter, tAfter);
+                }
+
+                const result = analyzeCollision(ballMass, pendulumMass, v1Initial, v1Final, v2Final);
+                result.type = exp.name;
+                allResults.push(result);
+
+                numericalOutput += `[${exp.name}]\n`;
+                numericalOutput += `  初始动量: ${result.p_initial.toFixed(4)} kg·m/s\n`;
+                numericalOutput += `  末态动量: ${result.p_final.toFixed(4)} kg·m/s\n`;
+                numericalOutput += `  能量损失: ${result.energy_loss.toFixed(4)} J\n`;
+                numericalOutput += `  恢复系数 (e): ${result.restitution_coeff.toFixed(4)}\n\n`;
+            }
+
+            document.getElementById('numerical-results').textContent = numericalOutput.trim();
+            document.getElementById('analysis-text').innerHTML = generateAnalysis(allResults);
+
+            destroyCharts();
+            plotAllCharts(allResults);
+            
+            // Scroll to results
+            document.getElementById('output-section').scrollIntoView({ behavior: 'smooth' });
+
+        } catch (error) {
+            alert("计算错误: " + error.message);
+            console.error(error);
+        }
+    });
+
+    function plotAllCharts(results) {
+        const labels = results.map(r => r.type);
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { title: { display: true, font: { size: 18 } }, legend: { position: 'top' } },
+            scales: { y: { beginAtZero: true, grid: { color: '#e0e0e0' } }, x: { grid: { display: false } } }
+        };
+
+        // 动量图
+        chartInstances.momentum = new Chart(document.getElementById('momentumChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: '初始总动量', data: results.map(r => r.p_initial), backgroundColor: 'rgba(52, 152, 219, 0.7)', borderColor: '#3498db' },
+                    { label: '末态总动量', data: results.map(r => r.p_final), backgroundColor: 'rgba(231, 76, 60, 0.7)', borderColor: '#e74c3c' }
+                ]
+            },
+            options: { ...chartOptions, plugins: { ...chartOptions.plugins, title: { ...chartOptions.plugins.title, text: '碰撞前后系统总动量对比' } } }
+        });
+
+        // 能量损失图
+        chartInstances.energy = new Chart(document.getElementById('energyChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: '能量损失 (J)',
+                    data: results.map(r => r.energy_loss),
+                    backgroundColor: ['rgba(46, 204, 113, 0.7)', 'rgba(243, 156, 18, 0.7)', 'rgba(231, 76, 60, 0.7)'],
+                    borderColor: ['#2ecc71', '#f39c12', '#e74c3c']
+                }]
+            },
+            options: { ...chartOptions, plugins: { ...chartOptions.plugins, title: { ...chartOptions.plugins.title, text: '碰撞过程中的能量损失' }, legend: { display: false } } }
+        });
+
+        // 恢复系数图
+        chartInstances.restitution = new Chart(document.getElementById('restitutionChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: '恢复系数 (e)',
+                    data: results.map(r => r.restitution_coeff),
+                    backgroundColor: ['rgba(46, 204, 113, 0.7)', 'rgba(243, 156, 18, 0.7)', 'rgba(231, 76, 60, 0.7)'],
+                    borderColor: ['#2ecc71', '#f39c12', '#e74c3c']
+                }]
+            },
+            options: { ...chartOptions, plugins: { ...chartOptions.plugins, title: { ...chartOptions.plugins.title, text: '不同碰撞类型的恢复系数' }, legend: { display: false } }, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, max: 1.2 } } }
+        });
+    }
+</script>
+
+</body>
+</html>
