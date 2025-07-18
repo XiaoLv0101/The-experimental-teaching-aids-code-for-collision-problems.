@@ -1,0 +1,476 @@
+#include <Wire.h>           // MPU6050 使用 I2C 总线，需要 Wire 库
+#include <MPU6050_light.h>  // MPU6050 传感器库
+#include <Adafruit_GFX.h>   // 屏幕绘图基础库
+#include <Adafruit_ST7735.h> // ST7735 屏幕驱动库
+#include <SPI.h>            // ST7735 使用 SPI 总线，需要 SPI 库
+// #include <Serial.h>       // Serial 通常是核心库的一部分，无需包含
+
+// --- ST7735 屏幕引脚定义 ---
+// 根据你的实际连接修改。PAx 指的是 STM32 芯片引脚名。
+#define TFT_CS    PA4   // Chip Select
+#define TFT_DC    PA2   // Data/Command (RS or A0)
+#define TFT_RST   PA1   // Reset (RES or RST)
+
+// *** IMPORTANT: 选择匹配你屏幕排线颜色的初始化类型 ***
+// 解除与你屏幕排线颜色匹配的那一行的注释，其它两行保持注释。
+#define ST7735_INIT_TYPE  INITR_BLACKTAB // 黑边屏幕
+// #define ST7735_INIT_TYPE  INITR_REDTAB   // 红边屏幕
+// #define ST7735_INIT_TYPE  INITR_GREENTAB // 绿边屏幕
+
+// 实例化 Adafruit_ST7735 屏幕对象
+// 默认使用 SPI1 (PA5 SCK, PA7 MOSI/SDA)
+Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
+
+// --- MPU6050 传感器实例化 ---
+// 使用默认的 Wire (I2C1) 总线
+// 确保 MPU6050 的 SCL 连接到 PB6, SDA 连接到 PB7
+MPU6050 mpu(Wire);
+
+// --- TCRT5000 传感器引脚定义 ---
+// 连接 TCRT5000 模拟输出 (AO) 的 STM32 引脚
+// 确保这些引脚是 STM32 的 ADC 输入引脚 (例如 PA0-PA7, PB0-PB1)
+#define TCRT5000_1_ANALOG_PIN PA0 // 第一个 TCRT5000 接 PA0
+#define TCRT5000_2_ANALOG_PIN PA3 // 第二个 TCRT5000 接 PA3
+
+// --- 传感器阈值设置 ---
+// 这些阈值需要根据你的 TCRT5000 传感器和检测物体/背景的实际读数进行调整。
+// 例如，如果检测黑色线在白色背景上，黑色部分读数高，白色部分读数低。
+// 阈值就设置在高于白色读数但低于黑色读数范围内。
+// 如果检测物体阻挡传感器（传感器悬空时读数低，物体靠近/阻挡时读数高）
+// 阈值就设置在高于悬空读数但低于检测物体读数范围内。
+// 请先运行 TCRT5000 模拟测试代码，确定读数范围！
+const int TCRT_THRESHOLD_1 = 2000; // 第一个 TCRT5000 的检测阈值
+const int TCRT_THRESHOLD_2 = 2000; // 第二个 TCRT5000 的检测阈值
+
+// --- MPU6050 测量参数 ---
+// 检测运动开始的加速度阈值 (单位 g)
+const float MOTION_START_ACC_THRESHOLD = 1.5; // 例如 1.5g，需要晃动加速度大于此值触发
+// 检测运动停止的角速度阈值 (单位 度/秒)
+const float MOTION_STOP_GYRO_THRESHOLD = 5.0; // 例如 5 度/秒，陀螺仪所有轴速度低于此值停止
+
+// --- 测量结果变量 ---
+float finalPeakAngularVelocity = 0;       // 最终测量的峰值角速度 (度/秒)
+float finalPeakPendulumAngle = 0;         // 最终测量的峰值估算角度 (度)
+unsigned long finalTcrt1Duration = 0;     // 最终测量到的 TCRT1 阻挡持续时间 (ms) - 第一次
+unsigned long finalTcrt2Duration = 0;     // 最终测量到的 TCRT2 阻挡持续时间 (ms) - 第二次
+
+
+// --- 测量过程中的临时变量 ---
+float currentPeakAngularVelocity = 0; // 测量过程中记录的峰值角速度
+float currentPeakPendulumAngle = 0;   // 测量过程中记录的峰值估算角度
+
+// TCRT5000 测量过程中的临时变量和计数器
+unsigned long tcrt1_detection_start_time = 0;
+bool tcrt1_is_detecting = false;
+bool tcrt1_measurement_done = false; // 标志 TCRT1 测量是否完成 (第一次通过完成)
+
+unsigned long tcrt2_detection_start_time = 0;
+bool tcrt2_is_detecting = false;
+int tcrt2_pass_count = 0; // 第二个 TCRT5000 通过计数 (从0开始)
+bool tcrt2_measurement_done = false; // 标志 TCRT2 测量是否完成 (第二次通过完成)
+
+
+unsigned long measurementStartTime = 0; // 记录测量开始的时间
+
+// --- 状态标志 ---
+bool measurementTriggered = false; // 是否已触发测量
+bool measurementCompleted = false; // 测量是否已完成
+
+// MPU 运动停止检测相关标志 (用于 STATE_MEASURING 状态内)
+bool motionStopDetected = false;
+unsigned long motionStopTime = 0;
+bool mpu_measurement_done = false; // 标志 MPU 测量阶段完成 (即运动停止+延迟结束)
+
+
+// --- MPU测量结束后的延迟时间 ---
+const unsigned long MEASUREMENT_POST_STOP_DELAY = 2000; // 运动停止后等待 2 秒再结束测量
+
+// --- 控制状态切换和数据打印的时间 ---
+unsigned long lastSerialPrintTime = 0;
+const unsigned long SERIAL_PRINT_INTERVAL = 200; // 串口打印 MPU/TCRT 数据间隔 (ms)
+
+// --- 状态机定义 ---
+enum State {
+  STATE_WAIT_TCRT1,     // 等待 TCRT1 的第一次通过
+  STATE_WAIT_TRIGGER,   // TCRT1 完成后，等待 MPU 的碰撞触发
+  STATE_MEASURING,      // MPU 触发后，测量进行中 (MPU 峰值, TCRT2 第二次)
+  STATE_COMPLETE        // 所有测量完成，显示结果并保持
+};
+State currentState = STATE_WAIT_TCRT1; // 初始状态为等待 TCRT1
+
+
+// --- 前向声明 (Forward Declarations) ---
+// 声明函数，以便在定义之前调用它们
+void transitionToState(State nextState);
+void updateScreen();
+void displayStatus(const char* message);
+void displayResults();
+
+
+void setup(void) {
+  // --- 启动串口通信 ---
+  Serial.begin(9600);
+  Serial.println("--- Setup Start ---");
+  Serial.println("Serial Communication Initialized.");
+
+  // --- 初始化 MPU6050 ---
+  Serial.println("Attempting MPU6050 Init...");
+  Wire.begin(); // 确保 I2C 总线开启
+  delay(100);   // 等待 MPU6050 上电稳定
+
+  byte mpu_status = mpu.begin(); // 检查初始化状态
+  Serial.print("MPU6050 mpu.begin() status: "); Serial.println(mpu_status);
+
+  if (mpu_status != 0) {
+    Serial.println("ERROR: MPU6050 Init Failed!");
+    Serial.println("Check MPU6050 wiring (SDA->PB7, SCL->PB6), power (3.3V). Halting.");
+    while (1); // 初始化失败则程序停止
+  } else {
+    Serial.println("MPU6050 Init Successful!");
+  }
+
+  // --- 校准 MPU6050 ---
+  Serial.println("Calibrating MPU6050. Keep still for 2 sec...");
+  mpu.calcOffsets(); // 计算陀螺仪和加速度计零点漂移
+  Serial.println("MPU6050 Calibration Done.");
+
+  // --- 初始化 ST7735 屏幕 ---
+  Serial.println("Attempting ST7735 Init...");
+  Serial.print("Init type: ");
+  if (ST7735_INIT_TYPE == INITR_BLACKTAB) Serial.println("BLACKTAB");
+  else if (ST7735_INIT_TYPE == INITR_REDTAB) Serial.println("REDTAB");
+  else if (ST7735_INIT_TYPE == INITR_GREENTAB) Serial.println("GREENTAB");
+  else Serial.println("Unknown Type");
+
+  Serial.println("Calling tft.initR()...");
+  tft.initR(ST7735_INIT_TYPE); // 调用屏幕初始化函数
+  Serial.println("tft.initR() finished.");
+
+  // Assuming ST7735 Initialization was successful if initR finished without crashing
+  // If screen is still white/blank, check connections, power, backlight, and INITR_TYPE!
+
+  // --- 配置 TCRT5000 引脚 ---
+  pinMode(TCRT5000_1_ANALOG_PIN, INPUT);
+  pinMode(TCRT5000_2_ANALOG_PIN, INPUT);
+  Serial.println("TCRT5000 Pins Configured.");
+
+  // --- Check screen dimensions ---
+  Serial.print("Screen Dims: ");
+  Serial.print(tft.width()); Serial.print("x"); Serial.println(tft.height());
+
+  // Optional: Manual offset for 128x128 or 160x128 Black Tab if needed
+  // Note: 1.8" 128x160 is often 160x128 in landscape mode. Check tft.width()/tft.height() after initR().
+  // if (ST7735_INIT_TYPE == INITR_BLACKTAB) {
+  //   if (tft.width() == 128 && tft.height() == 128) { // 1.44" 128x128
+  //      tft.setAddrWindow(2, 1, 128+2, 128+1);
+  //      Serial.println("Setting 1.44 inch black tab offset");
+  //   } else if (tft.width() == 128 && tft.height() == 160) { // 1.8" 128x160 (portrait)
+  //      tft.setAddrWindow(0, 20, 128, 160+20);
+  //      Serial.println("Setting 1.8 inch 128x160 black tab offset");
+  //   } else if (tft.width() == 160 && tft.height() == 128) { // 1.8" 128x160 (landscape, common for black tab)
+  //      tft.setAddrWindow(0, 20, 160, 128+20); // Offset might apply in landscape as well
+  //      Serial.println("Setting 1.8 inch 160x128 black tab offset");
+  //   }
+  // }
+  // After setting offset, you might need to re-clear the screen area if already drawn on
+  // tft.fillScreen(ST77XX_BLACK);
+
+  // --- 初始屏幕显示 ---
+  // updateScreen() 是在 transitionToState 中调用的，设置初始状态会触发第一次屏幕更新
+  // displayStatus("..."); // 不要在这里直接调用，在 transitionToState 中调用
+  transitionToState(STATE_WAIT_TCRT1); // 设置初始状态为等待 TCRT1
+
+  Serial.println("--- Setup Complete ---");
+}
+
+void loop() {
+  unsigned long currentMillis = millis(); // 获取当前时间
+
+  // Always update sensor data in the loop - TCRT first as per your finding
+  int tcrt1_reading = analogRead(TCRT5000_1_ANALOG_PIN); // 读取 TCRT1 数据
+  int tcrt2_reading = analogRead(TCRT5000_2_ANALOG_PIN); // 读取 TCRT2 数据
+  mpu.update(); // 从传感器读取最新 MPU 数据
+
+
+  // --- 定时串口打印传感器数据 (调试用) ---
+  static unsigned long lastSerialPrintTime = 0; // static ensures it retains value between loop calls
+  const unsigned long SERIAL_PRINT_INTERVAL = 200;
+  if (currentMillis - lastSerialPrintTime >= SERIAL_PRINT_INTERVAL) {
+    Serial.print("Time: "); Serial.print(currentMillis);
+    Serial.print(" | Acc(g): X="); Serial.print(mpu.getAccX(), 2);
+    Serial.print(" Y="); Serial.print(mpu.getAccY(), 2);
+    Serial.print(" Z="); Serial.print(mpu.getAccZ(), 2);
+    Serial.print(" | Gyro(deg/s): X="); Serial.print(mpu.getGyroX(), 2);
+    Serial.print(" Y="); Serial.print(mpu.getGyroY(), 2);
+    Serial.print(" Z="); Serial.print(mpu.getGyroZ(), 2);
+    Serial.print(" | TCRT1:"); Serial.print(tcrt1_reading);
+    Serial.print(" | TCRT2:"); Serial.print(tcrt2_reading);
+    Serial.print(" | TCRT2_Pass:"); Serial.print(tcrt2_pass_count); // 打印 TCRT2 通过计数
+    // Optional: Print current state for debugging
+    Serial.print(" | State:"); Serial.print(currentState);
+    // Serial.print(" Trig:"); Serial.print(measurementTriggered); // Not used in this structure
+    Serial.print(" Comp:"); Serial.print(measurementCompleted);
+    Serial.print(" MpuDone:"); Serial.print(mpu_measurement_done);
+    Serial.print(" T1Done:"); Serial.print(tcrt1_measurement_done);
+    Serial.print(" T2Done:"); Serial.print(tcrt2_measurement_done);
+
+    Serial.println();
+    lastSerialPrintTime = currentMillis; // 更新打印时间
+  }
+
+
+  // --- 状态机逻辑 ---
+  switch (currentState) {
+    case STATE_WAIT_TCRT1: { // 使用花括号包裹 case 块以允许内部变量声明和初始化
+      // 等待 TCRT1 的第一次通过并记录时长
+      // 判断是否检测到物体 (读数高于阈值表示检测到) - 根据你的传感器特性调整判断方向 > 或 <
+      bool tcrt1_currently_detecting = (tcrt1_reading > TCRT_THRESHOLD_1); // 如果是低于阈值检测到物体，改为 <
+
+      if (tcrt1_currently_detecting) {
+        if (!tcrt1_is_detecting) {
+          // 第一次检测到物体开始
+          tcrt1_is_detecting = true;
+          tcrt1_detection_start_time = currentMillis;
+          Serial.println("Debug: TCRT1 Start Detected"); // Debug print
+        }
+      } else {
+        if (tcrt1_is_detecting) {
+          // 第一次检测到物体结束 (TCRT1 测量完成)
+          tcrt1_is_detecting = false;
+          finalTcrt1Duration = currentMillis - tcrt1_detection_start_time; // 记录时长
+          tcrt1_measurement_done = true; // <--- 标记 TCRT1 测量完成
+          Serial.print("Debug: TCRT1 First Pass. Duration: "); Serial.println(finalTcrt1Duration); // Debug print
+          transitionToState(STATE_WAIT_TRIGGER); // TCRT1 完成后，切换到等待触发状态
+        }
+      }
+      // 在等待状态持续显示提示，这部分屏幕更新已移至 transitionToState 中
+      // displayStatus("TCRT1 Pass First");
+      break; // End of STATE_WAIT_TCRT1
+    } // End of case STATE_WAIT_TCRT1
+
+    case STATE_WAIT_TRIGGER: { // 使用花括号包裹 case 块
+      // TCRT1 完成后，等待 MPU 的碰撞触发
+      // 使用绝对值检测任一方向的晃动
+      if (abs(mpu.getAccX()) > MOTION_START_ACC_THRESHOLD ||
+          abs(mpu.getAccY()) > MOTION_START_ACC_THRESHOLD ||
+          abs(mpu.getAccZ()) > MOTION_START_ACC_THRESHOLD)
+      {
+        // 触发则开始测量 (MPU 峰值, TCRT2 第二次)
+        // measurementTriggered = true; // 这个标志在这个结构中不再需要
+        measurementStartTime = currentMillis; // 记录测量开始时间
+
+        // 重置 MPU 和 TCRT2 测量过程中的临时变量和结果变量 (仅在测量触发时重置)
+        currentPeakAngularVelocity = 0;
+        currentPeakPendulumAngle = 0;
+        finalPeakAngularVelocity = 0; // 确保开始时清零最终结果
+        finalPeakPendulumAngle = 0; // 确保开始时清零最终结果
+
+        tcrt2_detection_start_time = 0;
+        tcrt2_is_detecting = false;
+        tcrt2_pass_count = 0;     // 重置 TCRT2 通过计数
+        tcrt2_measurement_done = false; // 重置 TCRT2 测量完成标志
+        finalTcrt2Duration = 0; // 确保开始时清零之前的测量结果
+
+
+        motionStopDetected = false; // 重置运动停止检测标志
+        motionStopTime = 0;         // 重置运动停止时间
+        mpu_measurement_done = false; // 重置 MPU 测量完成标志
+
+        transitionToState(STATE_MEASURING); // 切换到测量状态
+      }
+      break; // End of STATE_WAIT_TRIGGER
+    } // End of case STATE_WAIT_TRIGGER
+
+    case STATE_MEASURING: { // 使用花括号包裹 case 块
+      // 测量进行中 (MPU 峰值记录, TCRT2 第二次检测, MPU 停止检测)
+
+      // --- MPU6050 数据处理和峰值记录 (只要测量在进行就一直记录) ---
+      // 只有当 MPU 运动停止并延迟后，才标记 MPU 测量阶段完成
+      if (!mpu_measurement_done) {
+          float currentAngularVelocity = max(max(abs(mpu.getGyroX()), abs(mpu.getGyroY())), abs(mpu.getGyroZ())); // 取三个轴绝对值的最大值作为当前角速度
+          if (currentAngularVelocity > currentPeakAngularVelocity) {
+            currentPeakAngularVelocity = currentAngularVelocity; // 更新当前测量过程中的峰值角速度
+          }
+           // 使用库自带的融合角度作为估算摆角，取 Y 轴的绝对值峰值
+           float currentPendulumAngle = abs(mpu.getAngleY()); // 假设摆动主要绕 Y 轴
+           if (currentPendulumAngle > currentPeakPendulumAngle) {
+               currentPeakPendulumAngle = currentPendulumAngle; // 更新当前测量过程中的峰值估算角度
+           }
+
+          // 判断 MPU 运动是否停止 (所有轴角速度都低于停止阈值)
+          if (abs(mpu.getGyroX()) < MOTION_STOP_GYRO_THRESHOLD &&
+              abs(mpu.getGyroY()) < MOTION_STOP_GYRO_THRESHOLD &&
+              abs(mpu.getGyroZ()) < MOTION_STOP_GYRO_THRESHOLD)
+          {
+               if (!motionStopDetected) {
+                  // 第一次检测到运动停止
+                  motionStopDetected = true;
+                  motionStopTime = currentMillis; // 记录停止时间
+                  Serial.println("Motion Stop Detected. Waiting for post-stop delay...");
+               }
+          } else {
+              // 如果在停止延迟期间又检测到运动，取消停止状态
+              if (motionStopDetected) {
+                  motionStopDetected = false;
+                  motionStopTime = 0;
+                  Serial.println("Motion Restarted. Resetting stop detection.");
+              }
+          }
+
+          // 检查 MPU 测量阶段是否结束 (运动停止 + 延迟)
+          // 同时确保测量过程持续了一段时间 (例如至少 500ms)
+          // Note: Removing the measurementStartTime check for flexibility in this state
+          if (motionStopDetected && (currentMillis - motionStopTime >= MEASUREMENT_POST_STOP_DELAY) /* && (currentMillis - measurementStartTime > 500) */ ) {
+              mpu_measurement_done = true; // MPU 测量阶段完成
+              Serial.println("MPU measurement phase complete.");
+              // 将最终峰值记录下来 (只记录一次 MPU 测量阶段完成时的值)
+              finalPeakAngularVelocity = currentPeakAngularVelocity;
+              finalPeakPendulumAngle = currentPeakPendulumAngle;
+          }
+      }
+
+
+      // --- 处理 TCRT5000 传感器数据以测量阻挡时间 ---
+      // TCRT 1 在 STATE_WAIT_TCRT1 中已经完成测量，这里不处理
+
+      // TCRT 2 (记录第二次完整阻挡时长, 且只记录一次)
+      // 只有当 TCRT2 的测量未完成时才执行其检测逻辑
+      if (!tcrt2_measurement_done) {
+          // 判断是否检测到物体 (读数高于阈值表示检测到) - 根据你的传感器特性调整判断方向 > 或 <
+          bool tcrt2_currently_detecting = (tcrt2_reading > TCRT_THRESHOLD_2); // 如果是低于阈值检测到物体，改为 <
+
+          if (tcrt2_currently_detecting) {
+            if (!tcrt2_is_detecting) {
+              // 开始检测到物体
+              tcrt2_is_detecting = true;
+              tcrt2_detection_start_time = currentMillis;
+              // Serial.println("Debug: TCRT2 Start Detected"); // Debug print
+            }
+          } else {
+            if (tcrt2_is_detecting) {
+              // 检测结束
+              tcrt2_is_detecting = false;
+              // 增加通过计数
+              tcrt2_pass_count++;
+              // Serial.print("Debug: TCRT2 Stop Detected. Count: "); Serial.println(tcrt2_pass_count); // Debug print
+              // 如果是第二次通过，记录时长
+              if (tcrt2_pass_count == 2) {
+                  finalTcrt2Duration = currentMillis - tcrt2_detection_start_time;
+                  tcrt2_measurement_done = true; // <--- 标记 TCRT2 测量完成 (只记录第二次)
+                  Serial.print("Debug: TCRT2 Second Pass. Duration: "); Serial.println(finalTcrt2Duration); // Debug print
+              }
+            }
+          }
+      } // End of if (!tcrt2_measurement_done)
+
+
+      // --- 检查整个测量过程是否完成 ---
+      // 只有当 MPU 和 TCRT2 的测量阶段都完成时，才标记整个测量过程完成
+      // TCRT1 测量阶段在进入 MEASURING 之前已经完成
+      if (mpu_measurement_done && tcrt2_measurement_done) {
+          measurementCompleted = true; // 标记整个测量完成
+          Serial.println("All measurements complete!");
+          transitionToState(STATE_COMPLETE); // 切换到完成状态
+      }
+
+      break; // End of STATE_MEASURING
+    } // End of case STATE_MEASURING
+
+    case STATE_COMPLETE: { // 使用花括号包裹 case 块
+       // 显示最终结果并保持
+       // 结果在进入此状态时显示一次 (在 transitionToState 中调用 displayResults)
+      break; // End of STATE_COMPLETE
+    } // End of case STATE_COMPLETE
+  } // End of switch
+
+  // 如果 measurementCompleted 为 true，loop 函数会继续执行，但测量逻辑会被跳过
+  // 屏幕会保持显示最终结果
+}
+
+// --- 状态切换函数 ---
+void transitionToState(State nextState) {
+  State previousState = currentState; // Capture current state before changing
+  currentState = nextState;
+  // state_enter_time = millis(); // 可以用于计时，这里不用
+
+  Serial.print("Transition from State "); Serial.print(previousState);
+  Serial.print(" to State: "); Serial.println(currentState);
+
+  // 根据新的状态更新屏幕显示
+  updateScreen();
+
+  // 在进入 COMPLETE 状态时，额外打印最终结果到串口一次
+  if (currentState == STATE_COMPLETE) {
+      Serial.println("--- Final Results ---");
+      Serial.print("TCRT1 Duration: "); Serial.print(finalTcrt1Duration); Serial.println(" ms");
+      Serial.print("TCRT2 Duration: "); Serial.print(finalTcrt2Duration); Serial.println(" ms");
+      Serial.print("Peak Gyro: "); Serial.print(finalPeakAngularVelocity, 1); Serial.println(" deg/s");
+      Serial.print("Peak Angle: "); Serial.print(finalPeakPendulumAngle, 1); Serial.println(" deg");
+      Serial.println("--- End of Results ---");
+  }
+}
+
+// --- 屏幕显示更新函数 ---
+void updateScreen() {
+  tft.fillScreen(ST77XX_BLACK); // 清屏
+  tft.setCursor(0, 0);         // 设置文本光标位置
+  tft.setTextColor(ST77XX_WHITE); // 设置文本颜色
+  tft.setTextSize(1);          // 文本大小
+
+  switch (currentState) {
+    case STATE_WAIT_TCRT1:
+      tft.println("System Ready.");
+      tft.println("");
+      tft.println("TCRT1 Pass First");
+      tft.println("to Start!");
+      break;
+
+    case STATE_WAIT_TRIGGER:
+      tft.println("TCRT1 Done.");
+      tft.println("");
+      tft.println("Shake to Start");
+      tft.println("Measurement!");
+      break;
+
+    case STATE_MEASURING:
+      tft.println("Measuring...");
+      tft.println("");
+      tft.println("Wait for Pendulum");
+      tft.println("to Stop.");
+      // 如果想在测量中实时显示 MPU 数据，可以在这里添加，但会减慢循环速度
+      // 例如: tft.print("GyroY:"); tft.println(mpu.getGyroY(), 1);
+      break;
+
+    case STATE_COMPLETE:
+       tft.println("--- Results ---");
+       tft.println("");
+
+       // 显示 TCRT1 阻挡时间 (ms) - 第一次
+       tft.print("TCRT1 Duration: ");
+       tft.print(finalTcrt1Duration);
+       tft.println(" ms");
+
+       // 显示 TCRT2 阻挡时间 (ms) - 第二次
+       tft.print("TCRT2 Duration: ");
+       tft.print(finalTcrt2Duration);
+       tft.println(" ms");
+       tft.println("");
+
+       // 显示 MPU6050 峰值角速度 (速度)
+       tft.print("Peak Gyro: ");
+       tft.print(finalPeakAngularVelocity, 1); // 1位小数
+       tft.println(" deg/s");
+
+       // 显示 MPU6050 峰值估算角度 (摆角)
+       tft.print("Peak Angle: ");
+       tft.print(finalPeakPendulumAngle, 1); // 1位小数
+       tft.println(" deg");
+       tft.println("");
+
+       tft.println("Measurement Done!"); // 提示测量完成
+      break;
+  }
+}
+
+// --- Helper function for state transitions ---
+// void transitionToState(State nextState) { ... implementation above ... }
