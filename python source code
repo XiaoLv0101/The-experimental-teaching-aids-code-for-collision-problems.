@@ -1,0 +1,185 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import sys
+
+# --- 物理计算核心函数 ---
+
+# 定义物理常量
+g = 9.8  # 重力加速度 (m/s^2)
+
+
+def calculate_velocity_from_photogate(diameter, time):
+    """根据挡光时间计算小球速度"""
+    if time <= 0:
+        return 0
+    return diameter / time
+
+
+def calculate_velocity_from_pendulum(length, theta_degrees):
+    """根据单摆摆角计算其碰撞后的瞬时速度"""
+    # 将角度转换为弧度
+    theta_rad = np.radians(theta_degrees)
+    # 根据机械能守恒 m*g*h = 0.5*m*v^2, 其中 h = L - L*cos(theta)
+    h = length * (1 - np.cos(theta_rad))
+    # v = sqrt(2*g*h)
+    velocity = np.sqrt(2 * g * h)
+    return velocity
+
+
+def analyze_collision(ball_mass, pendulum_mass, v1_initial, v1_final, v2_final):
+    """计算碰撞的各项物理量"""
+    v2_initial = 0  # 单摆初始静止
+
+    # 1. 动量计算
+    p_initial = ball_mass * v1_initial + pendulum_mass * v2_initial
+    p_final = ball_mass * v1_final + pendulum_mass * v2_final
+
+    # 2. 动能和能量损失计算
+    ke_initial = 0.5 * ball_mass * v1_initial ** 2
+    ke_final = 0.5 * ball_mass * v1_final ** 2 + 0.5 * pendulum_mass * v2_final ** 2
+    energy_loss = ke_initial - ke_final
+
+    # 3. 恢复系数计算 e = (v2_final - v1_final) / (v1_initial - v2_initial)
+    if v1_initial != 0:
+        restitution_coeff = (v2_final - v1_final) / v1_initial
+    else:
+        restitution_coeff = float('nan')  # 初始速度为0，无法计算
+
+    return {
+        "p_initial": p_initial,
+        "p_final": p_final,
+        "energy_loss": energy_loss,
+        "restitution_coeff": restitution_coeff,
+    }
+
+
+# --- 数据可视化函数 (无需修改) ---
+
+def plot_results(results):
+    """使用matplotlib绘制结果对比图"""
+    # 设置中文字体，以防图表中的中文显示为方块
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+
+    labels = [res["type"] for res in results]
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 18))
+    fig.suptitle('三类碰撞实验数据对比分析', fontsize=20, y=0.95)
+
+    # 1. 动量对比图
+    p_initials = [res["p_initial"] for res in results]
+    p_finals = [res["p_final"] for res in results]
+    x = np.arange(len(labels))
+    width = 0.35
+    rects1 = axes[0].bar(x - width / 2, p_initials, width, label='初始总动量', color='skyblue')
+    rects2 = axes[0].bar(x + width / 2, p_finals, width, label='末态总动量', color='salmon')
+    axes[0].set_ylabel('动量 (kg·m/s)', fontsize=12)
+    axes[0].set_title('碰撞前后系统总动量对比', fontsize=14)
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(labels, fontsize=12)
+    axes[0].legend()
+    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+    axes[0].bar_label(rects1, padding=3, fmt='%.4f')
+    axes[0].bar_label(rects2, padding=3, fmt='%.4f')
+
+    # 2. 能量损失图
+    energy_losses = [res["energy_loss"] for res in results]
+    colors = ['green', 'orange', 'red']
+    rects = axes[1].bar(labels, energy_losses, color=colors)
+    axes[1].set_ylabel('能量损失 (J)', fontsize=12)
+    axes[1].set_title('碰撞过程中的能量损失', fontsize=14)
+    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
+    axes[1].bar_label(rects, padding=3, fmt='%.4f')
+
+    # 3. 恢复系数图
+    restitution_coeffs = [res["restitution_coeff"] for res in results]
+    rects = axes[2].bar(labels, restitution_coeffs, color=colors)
+    axes[2].set_ylabel('恢复系数 (e)', fontsize=12)
+    axes[2].set_title('不同碰撞类型的恢复系数', fontsize=14)
+    axes[2].set_ylim(0, 1.3)
+    axes[2].axhline(y=1.0, color='blue', linestyle='--', label='理论完全弹性碰撞 (e=1)')
+    axes[2].axhline(y=0.0, color='black', linestyle=':', label='理论完全非弹性碰撞 (e=0)')
+    axes[2].grid(axis='y', linestyle='--', alpha=0.7)
+    axes[2].legend()
+    axes[2].bar_label(rects, padding=3, fmt='%.3f')
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    plt.show()
+
+
+# --- 主程序入口 ---
+
+def main():
+    """主函数，负责获取输入和调用其他函数"""
+    print("=" * 50)
+    print("       物理碰撞实验数据分析与可视化工具")
+    print("=" * 50)
+
+    try:
+        # 获取实验装置的固定参数
+        print("\n--- 请输入实验装置的固定参数 ---")
+        # 摆长通常是实验装置的属性，保持不变
+        pendulum_length = float(input("请输入单摆的摆长 (L, 单位: m): "))
+
+        all_results = []
+        experiment_types = ["完全弹性碰撞", "非完全弹性碰撞", "完全非弹性碰撞"]
+
+        for exp_type in experiment_types:
+            print("\n" + "=" * 20)
+            print(f"--- {exp_type} 数据输入 ---")
+            print("=" * 20)
+
+            # 获取每组实验的可变参数（包括入射球和被撞球）
+            ball_mass = float(input(f"请输入[{exp_type}]入射小球的质量 (m1, 单位: kg): "))
+            ball_diameter = float(input(f"请输入[{exp_type}]入射小球的直径 (d, 单位: m): "))
+            pendulum_mass = float(input(f"请输入[{exp_type}]单摆小球的质量 (m2, 单位: kg): "))
+
+            # 获取测量数据
+            print("-" * 20)
+            t_before = float(input("请输入碰撞前挡住光电门的时间 (t1, 单位: s): "))
+
+            v1_final = 0
+            if exp_type == "完全非弹性碰撞":
+                print("\n提示：对于完全非弹性碰撞，入射小球与单摆粘在一起运动，")
+                print("      因此它们碰撞后的速度相同，且入射小球不会再次通过光电门。\n")
+            else:
+                t_after = float(input("请输入碰撞后挡住光电门的时间 (t2, 单位: s): "))
+                v1_final = calculate_velocity_from_photogate(ball_diameter, t_after)
+
+            angle = float(input("请输入单摆最大摆角 (θ, 单位: 度): "))
+
+            # --- 开始计算 ---
+            v1_initial = calculate_velocity_from_photogate(ball_diameter, t_before)
+            v2_final = calculate_velocity_from_pendulum(pendulum_length, angle)
+
+            if exp_type == "完全非弹性碰撞":
+                v1_final = v2_final
+
+            # 分析该次碰撞
+            result = analyze_collision(ball_mass, pendulum_mass, v1_initial, v1_final, v2_final)
+            result['type'] = exp_type  # 添加类型标签
+            all_results.append(result)
+
+            # 打印单次计算结果
+            print(f"\n--- {exp_type} 计算结果 ---")
+            print(f"初始动量: {result['p_initial']:.4f} kg·m/s")
+            print(f"末动量:   {result['p_final']:.4f} kg·m/s")
+            p_ratio = result['p_final'] / result['p_initial'] if result['p_initial'] != 0 else 0
+            print(f"动量守恒检验 (P_final / P_initial): {p_ratio:.4f}")
+            print(f"能量损失: {result['energy_loss']:.4f} J")
+            print(f"恢复系数 (e): {result['restitution_coeff']:.4f}")
+
+    except ValueError:
+        print("\n错误：输入无效，请输入数字。程序即将退出。")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n发生未知错误: {e}。程序即将退出。")
+        sys.exit(1)
+
+    print("\n\n所有数据已收集，正在生成可视化图表...")
+    plot_results(all_results)
+    print("图表已生成。")
+
+
+if __name__ == "__main__":
+    main()
